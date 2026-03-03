@@ -3,10 +3,13 @@ from datetime import datetime
 from typing import Optional
 
 from sqlalchemy.orm import Session, joinedload
-from sqlalchemy import or_
 
 from app.models import User, ApiKeyApplication, ApiCredential, ApplicationStatus
-from app.schemas.application import ApplicationCreate, ApplicationResponse
+
+
+def _normalize_email(e: str) -> str:
+    return (e or "").strip().lower()
+from app.schemas.application import ApplicationCreate
 from app.services.credential import CredentialService
 from app.services.apisix import ApisixClient, ApisixError
 
@@ -59,6 +62,40 @@ class ApplicationService:
             .filter(ApiKeyApplication.id == application_id)
             .first()
         )
+
+    def get_application_status_for_applicant(
+        self, application_id: int, email: str
+    ) -> Optional[dict]:
+        """
+        申请人凭申请编号 + 邮箱查询状态。若已通过且邮箱一致则返回 api_key 等信息。
+        """
+        app = (
+            self.db.query(ApiKeyApplication)
+            .options(
+                joinedload(ApiKeyApplication.user),
+                joinedload(ApiKeyApplication.credential),
+            )
+            .filter(ApiKeyApplication.id == application_id)
+            .first()
+        )
+        if not app:
+            return None
+        if _normalize_email(app.user.email) != _normalize_email(email):
+            return None
+        out = {
+            "id": app.id,
+            "status": app.status,
+            "reason": app.reason,
+            "created_at": app.created_at,
+            "reviewed_at": app.reviewed_at,
+            "user_username": app.user.username if app.user else None,
+            "user_email": app.user.email if app.user else None,
+        }
+        if app.status == ApplicationStatus.APPROVED.value and app.credential:
+            out["api_key"] = app.credential.api_key
+            out["consumer_name"] = app.credential.consumer_name
+            out["token_balance"] = getattr(app.credential, "token_balance", 0)
+        return out
 
     def approve(self, application_id: int) -> ApiCredential:
         """Approve application: create credential and APISIX consumer."""

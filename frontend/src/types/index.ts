@@ -15,6 +15,20 @@ export interface ApplicationListResponse {
   total: number
 }
 
+/** 申请人查询审批状态（已通过时含 api_key） */
+export interface ApplicationStatusResponse {
+  id: number
+  status: string
+  reason: string | null
+  created_at: string
+  reviewed_at: string | null
+  user_username: string | null
+  user_email: string | null
+  api_key?: string
+  consumer_name?: string
+  token_balance?: number
+}
+
 /** 创建申请 */
 export interface ApplicationCreate {
   username: string

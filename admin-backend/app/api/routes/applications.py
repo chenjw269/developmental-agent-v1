@@ -39,6 +39,22 @@ def create_application(
         raise HTTPException(status_code=400, detail=str(e))
 
 
+@router.get("/{application_id}/status")
+def get_application_status(
+    application_id: int,
+    email: Annotated[str, Query(description="申请时填写的邮箱，用于验证身份")] = "",
+    db: Annotated[Session, Depends(get_db_session)] = ...,
+):
+    """申请人凭申请编号 + 邮箱查询审批状态；已通过时返回 API Key。无需管理员权限。"""
+    if not email or not email.strip():
+        raise HTTPException(status_code=400, detail="请提供邮箱参数 email")
+    svc = ApplicationService(db)
+    data = svc.get_application_status_for_applicant(application_id, email.strip())
+    if not data:
+        raise HTTPException(status_code=404, detail="申请不存在或邮箱不匹配")
+    return data
+
+
 @router.get("", response_model=ApplicationListResponse)
 def list_applications(
     db: Annotated[Session, Depends(get_db_session)],

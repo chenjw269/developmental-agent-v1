@@ -44,3 +44,8 @@ def init_db() -> None:
                     "ALTER TABLE api_credentials ADD COLUMN token_balance INTEGER NOT NULL DEFAULT 0"
                 ))
                 conn.commit()
+            if rows and not any(row[1] == "tokens_used" for row in rows):
+                conn.execute(text(
+                    "ALTER TABLE api_credentials ADD COLUMN tokens_used INTEGER NOT NULL DEFAULT 0"
+                ))
+                conn.commit()

@@ -16,6 +16,7 @@ class ApiCredential(Base):
     api_key = Column(String(256), nullable=False, index=True)
     quota_per_minute = Column(Integer, nullable=False, default=60)
     token_balance = Column(Integer, nullable=False, default=0)
+    tokens_used = Column(Integer, nullable=False, default=0)
     is_active = Column(Boolean, nullable=False, default=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
