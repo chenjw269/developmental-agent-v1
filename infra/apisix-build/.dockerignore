@@ -1,0 +1,10 @@
+# 仅保留 Dockerfile 和构建所需的 shell 脚本
+# 排除其他无关文件
+
+README.md
+.env
+.env.*
+.git/
+.gitignore
+.vscode/
+.idea/
