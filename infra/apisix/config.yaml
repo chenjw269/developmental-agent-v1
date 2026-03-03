@@ -1,0 +1,31 @@
+# Apache APISIX 配置 - 连接 etcd，开放 Admin API
+# 与 .env 中 APISIX_ADMIN_KEY 保持一致（默认 edd1c9f034335f136f87ad84b625c8f1）
+
+apisix:
+  node_listen: 9080
+  enable_ipv6: false
+
+deployment:
+  admin:
+    allow_admin:
+      - 0.0.0.0/0
+    admin_key:
+      - name: admin
+        key: edd1c9f034335f136f87ad84b625c8f1
+        role: admin
+  etcd:
+    host:
+      - "http://etcd:2379"
+    prefix: "/apisix"
+    timeout: 30
+
+# 仅启用本演示用到的插件，其余用默认
+plugins:
+  - real-ip
+  - request-id
+  - key-auth
+  - limit-count
+  - proxy-rewrite
+  - redirect
+  - response-rewrite
+  - echo

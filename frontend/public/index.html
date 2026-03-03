@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>智能体 API 网关演示</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 720px; margin: 2rem auto; padding: 0 1rem; }
+    h1 { font-size: 1.25rem; }
+    section { margin: 1.5rem 0; }
+    a { color: #2563eb; }
+    code { background: #f1f5f9; padding: 0.2em 0.4em; border-radius: 4px; }
+    ul { padding-left: 1.25rem; }
+  </style>
+</head>
+<body>
+  <h1>智能体 API 网关演示系统</h1>
+  <p>本页为前端占位，用于 Docker Compose 连通性验证。实际业务请使用 React 前端对接下方接口。</p>
+
+  <section>
+    <h2>服务入口</h2>
+    <ul>
+      <li><strong>管理后端 API</strong>（申请 / 审批 / 配额）: <a href="http://localhost:8000/docs" target="_blank" rel="noopener">http://localhost:8000/docs</a></li>
+      <li><strong>APISIX 代理</strong>（需 API Key）: <code>http://localhost:9080/agent/chat</code>（POST）</li>
+      <li><strong>模拟智能体直连</strong>（仅演示）: <a href="http://localhost:8001/health" target="_blank" rel="noopener">http://localhost:8001/health</a></li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>验证步骤</h2>
+    <ol>
+      <li>在管理后端提交申请 → <code>POST /api/v1/applications</code></li>
+      <li>管理员审批通过 → <code>POST /api/v1/applications/{id}/approve</code>，获得 API Key</li>
+      <li>使用 API Key 调用网关: <code>curl -X POST http://localhost:9080/agent/chat -H "X-API-KEY: &lt;key&gt;" -H "Content-Type: application/json" -d "{\"message\":\"hi\"}"</code></li>
+    </ol>
+  </section>
+</body>
+</html>

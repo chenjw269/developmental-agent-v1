@@ -1,0 +1,151 @@
+# 智能体 API 网关演示系统 - Docker Compose
+# 服务: etcd, APISIX, admin-backend, mock-agent-service, frontend
+
+services:
+  # ---------- 配置中心（使用官方 etcd 镜像，Bitnami 已迁移） ----------
+  etcd:
+    image: quay.io/coreos/etcd:v3.5.13
+    container_name: demo-etcd
+    environment:
+      ETCD_ADVERTISE_CLIENT_URLS: "http://etcd:2379"
+      ETCD_LISTEN_CLIENT_URLS: "http://0.0.0.0:2379"
+      ETCD_DATA_DIR: "/etcd-data"
+    ports:
+      - "2379:2379"
+    volumes:
+      - etcd_data:/etcd-data
+    healthcheck:
+      test: ["CMD", "etcdctl", "--endpoints=http://localhost:2379", "endpoint", "health"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    networks:
+      - app-net
+
+  # ---------- API 网关 ----------
+  apisix:
+    # 自建镜像：从 apiseven.com 安装 APISIX，仅用 AWS ECR 的 debian 基础镜像
+    build:
+      context: ./infra/apisix-build
+      dockerfile: Dockerfile
+    container_name: demo-apisix
+    depends_on:
+      etcd:
+        condition: service_healthy
+    ports:
+      - "9080:9080"   # 数据面：代理流量（用户请求 /agent/chat）
+      - "9180:9180"   # 控制面：Admin API（admin-backend 调用）
+    volumes:
+      - ./infra/apisix/config.yaml:/usr/local/apisix/conf/config.yaml:ro
+    environment:
+      APISIX_STAND_ALONE: "false"
+    healthcheck:
+      test: ["CMD", "curl", "-s", "http://127.0.0.1:9180/apisix/admin/routes", "-H", "X-API-KEY: ${APISIX_ADMIN_KEY}"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+    networks:
+      - app-net
+
+  # ---------- 初始化 APISIX 默认路由（创建 Upstream + Route） ----------
+  apisix-init:
+    build:
+      context: ./infra/apisix-init
+      dockerfile: Dockerfile
+    container_name: demo-apisix-init
+    depends_on:
+      apisix:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      APISIX_ADMIN_URL: "http://apisix:9180"
+      APISIX_ADMIN_KEY: "${APISIX_ADMIN_KEY}"
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -e
+        echo "Creating APISIX upstream (mock-agent-service)..."
+        curl -s -X PUT "$${APISIX_ADMIN_URL}/apisix/admin/upstreams/1" \
+          -H "X-API-KEY: $${APISIX_ADMIN_KEY}" \
+          -H "Content-Type: application/json" \
+          -d '{"type":"roundrobin","nodes":[{"host":"mock-agent-service","port":8000,"weight":1}]}'
+        echo ""
+        echo "Creating APISIX route /agent/chat (POST,GET) with CORS headers..."
+        curl -s -X PUT "$${APISIX_ADMIN_URL}/apisix/admin/routes/1" \
+          -H "X-API-KEY: $${APISIX_ADMIN_KEY}" \
+          -H "Content-Type: application/json" \
+          -d '{"uri":"/agent/chat","name":"agent-chat","methods":["POST","GET"],"upstream_id":"1","plugins":{"key-auth":{"header":"X-API-KEY"},"response-rewrite":{"headers":{"set":{"Access-Control-Allow-Origin":"http://localhost:3000","Access-Control-Allow-Methods":"GET,POST,OPTIONS","Access-Control-Allow-Headers":"*","Access-Control-Allow-Credentials":"true"}}}}}'
+        echo ""
+        echo "Creating APISIX route OPTIONS /agent/chat (preflight)..."
+        curl -s -X PUT "$${APISIX_ADMIN_URL}/apisix/admin/routes/2" \
+          -H "X-API-KEY: $${APISIX_ADMIN_KEY}" \
+          -H "Content-Type: application/json" \
+          -d '{"uri":"/agent/chat","name":"agent-chat-options","methods":["OPTIONS"],"priority":10,"upstream_id":"1","plugins":{"response-rewrite":{"status_code":204,"headers":{"set":{"Access-Control-Allow-Origin":"http://localhost:3000","Access-Control-Allow-Methods":"GET,POST,OPTIONS","Access-Control-Allow-Headers":"*","Access-Control-Allow-Credentials":"true"}}}}}'
+        echo ""
+        echo "APISIX init done."
+    networks:
+      - app-net
+    restart: "no"
+
+  # ---------- 模拟智能体服务（APISIX 的上游） ----------
+  mock-agent-service:
+    build:
+      context: ./mock-agent-service
+      dockerfile: Dockerfile
+    container_name: demo-mock-agent
+    env_file:
+      - .env
+    environment:
+      ADMIN_BACKEND_URL: "http://admin-backend:8000"
+      INTERNAL_SECRET: "${INTERNAL_SECRET}"
+    ports:
+      - "8001:8000"
+    networks:
+      - app-net
+
+  # ---------- 管理后端（申请/审批/配额，调用 APISIX Admin API） ----------
+  admin-backend:
+    build:
+      context: ./admin-backend
+      dockerfile: Dockerfile
+    container_name: demo-admin-backend
+    depends_on:
+      - apisix
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: "sqlite:////app/data/admin.db"
+      APISIX_ADMIN_URL: "http://apisix:9180"
+      APISIX_ADMIN_KEY: "${APISIX_ADMIN_KEY}"
+      ADMIN_API_KEY: "${ADMIN_API_KEY}"
+      INTERNAL_SECRET: "${INTERNAL_SECRET}"
+      INITIAL_TOKEN_BALANCE: "${INITIAL_TOKEN_BALANCE:-10}"
+    volumes:
+      - admin_db_data:/app/data
+    working_dir: /app
+    command: ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port 8000"]
+    ports:
+      - "8000:8000"
+    networks:
+      - app-net
+
+  # ---------- 前端（演示页） ----------
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: demo-frontend
+    ports:
+      - "3000:80"
+    networks:
+      - app-net
+
+volumes:
+  etcd_data:
+  admin_db_data:
+
+networks:
+  app-net:
+    driver: bridge
