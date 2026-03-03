@@ -75,11 +75,14 @@ class CredentialService:
         cred = self.get_credential_by_consumer_name(consumer_name)
         if not cred or cred.token_balance <= 0:
             return False, 0
-        # Atomic: UPDATE ... SET token_balance = token_balance - 1 WHERE id = ? AND token_balance > 0
+        # Atomic: deduct 1 from balance and increment tokens_used
         stmt = (
             update(ApiCredential)
             .where(ApiCredential.id == cred.id, ApiCredential.token_balance > 0)
-            .values(token_balance=ApiCredential.token_balance - 1)
+            .values(
+                token_balance=ApiCredential.token_balance - 1,
+                tokens_used=ApiCredential.tokens_used + 1,
+            )
         )
         result = self.db.execute(stmt)
         self.db.commit()

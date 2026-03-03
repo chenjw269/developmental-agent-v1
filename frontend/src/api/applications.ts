@@ -1,7 +1,9 @@
+import { ADMIN_API_BASE } from '../config'
 import type {
   ApplicationCreate,
   Application,
   ApplicationListResponse,
+  ApplicationStatusResponse,
   ApproveResponse,
 } from '../types'
 import { adminGet, adminPost, adminDelete, ApiError } from './client'
@@ -18,6 +20,22 @@ export async function createApplication(
   } catch (e) {
     throw e as ApiError
   }
+}
+
+/** 用户：凭申请编号 + 邮箱查询审批状态（已通过时返回 API Key） */
+export async function getApplicationStatus(
+  applicationId: number,
+  email: string
+): Promise<ApplicationStatusResponse> {
+  const url = `${ADMIN_API_BASE}${BASE}/${applicationId}/status?email=${encodeURIComponent(email.trim())}`
+  const res = await fetch(url)
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) {
+    const err = new Error((data.detail ?? data.message ?? res.statusText) as string) as ApiError
+    ;(err as { status?: number }).status = res.status
+    throw err
+  }
+  return data as ApplicationStatusResponse
 }
 
 /** 管理员：获取申请列表 */

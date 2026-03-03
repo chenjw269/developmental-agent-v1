@@ -14,13 +14,23 @@ import {
   enableCredential,
   deleteCredential,
 } from '../api/credentials'
+import {
+  getDashboardUsers,
+  getDashboardSummary,
+  getDashboardStats,
+} from '../api/dashboard'
 import type { Application, Credential } from '../types'
 import type { ApiError } from '../api/client'
+import type { DashboardUser, DashboardSummary as SummaryType, DashboardStats as StatsType } from '../api/dashboard'
+import { PieChart, Pie, Cell, ResponsiveContainer, Legend, Tooltip } from 'recharts'
 
 const ADMIN_KEY_STORAGE = 'gateway_demo_admin_key'
 
 export default function Admin() {
   const [adminKey, setAdminKey] = useState(() => localStorage.getItem(ADMIN_KEY_STORAGE) || '')
+  const [loginPassword, setLoginPassword] = useState('')
+  const [loginLoading, setLoginLoading] = useState(false)
+  const [loginError, setLoginError] = useState<string | null>(null)
   const [applications, setApplications] = useState<Application[]>([])
   const [credentials, setCredentials] = useState<Credential[]>([])
   const [loadingApps, setLoadingApps] = useState(false)
@@ -36,6 +46,19 @@ export default function Admin() {
   const [setBalanceAmount, setSetBalanceAmount] = useState('')
   const [setBalanceLoading, setSetBalanceLoading] = useState(false)
 
+  const [dashboardSummary, setDashboardSummary] = useState<SummaryType | null>(null)
+  const [dashboardUsers, setDashboardUsers] = useState<DashboardUser[]>([])
+  const [dashboardUserId, setDashboardUserId] = useState<number | ''>('')
+  const [dashboardStats, setDashboardStats] = useState<StatsType | null>(null)
+  const [dashboardLoading, setDashboardLoading] = useState(false)
+
+  const handleLogout = () => {
+    localStorage.removeItem(ADMIN_KEY_STORAGE)
+    setAdminKey('')
+    setError(null)
+    setSuccess(null)
+  }
+
   const loadApplications = async () => {
     setLoadingApps(true)
     setError(null)
@@ -43,7 +66,9 @@ export default function Admin() {
       const res = await listApplications({ limit: 50 }, adminKey || undefined)
       setApplications(res.items)
     } catch (e) {
-      setError((e as ApiError).message || '加载申请列表失败')
+      const err = e as ApiError
+      setError(err.message || '加载申请列表失败')
+      if (err.status === 403) handleLogout()
     } finally {
       setLoadingApps(false)
     }
@@ -56,16 +81,81 @@ export default function Admin() {
       const res = await listCredentials({ limit: 50 }, adminKey || undefined)
       setCredentials(res.items)
     } catch (e) {
-      setError((e as ApiError).message || '加载凭证列表失败')
+      const err = e as ApiError
+      setError(err.message || '加载凭证列表失败')
+      if (err.status === 403) handleLogout()
     } finally {
       setLoadingCreds(false)
     }
   }
 
   useEffect(() => {
-    loadApplications()
-    loadCredentials()
-  }, [])
+    if (adminKey) {
+      loadApplications()
+      loadCredentials()
+    }
+  }, [adminKey])
+
+  const loadDashboard = async () => {
+    if (!adminKey) return
+    setDashboardLoading(true)
+    try {
+      const [summaryRes, usersRes] = await Promise.all([
+        getDashboardSummary(adminKey),
+        getDashboardUsers(adminKey),
+      ])
+      setDashboardSummary(summaryRes)
+      setDashboardUsers(usersRes.items || [])
+    } catch {
+      setDashboardSummary(null)
+      setDashboardUsers([])
+    } finally {
+      setDashboardLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    if (adminKey) loadDashboard()
+  }, [adminKey])
+
+  const onDashboardUserChange = async (userId: number | '') => {
+    setDashboardUserId(userId)
+    if (!adminKey) return
+    if (userId === '') {
+      setDashboardStats(null)
+      return
+    }
+    setDashboardLoading(true)
+    try {
+      const stats = await getDashboardStats(adminKey, userId)
+      setDashboardStats(stats)
+    } catch {
+      setDashboardStats(null)
+    } finally {
+      setDashboardLoading(false)
+    }
+  }
+
+  const handleLogin = async (e: React.FormEvent) => {
+    e.preventDefault()
+    const pwd = loginPassword.trim()
+    if (!pwd) {
+      setLoginError('请输入管理员密码')
+      return
+    }
+    setLoginError(null)
+    setLoginLoading(true)
+    try {
+      await listApplications({ limit: 1 }, pwd)
+      localStorage.setItem(ADMIN_KEY_STORAGE, pwd)
+      setAdminKey(pwd)
+      setLoginPassword('')
+    } catch {
+      setLoginError('管理员密码错误，请重试')
+    } finally {
+      setLoginLoading(false)
+    }
+  }
 
   const saveAdminKey = () => {
     if (adminKey) localStorage.setItem(ADMIN_KEY_STORAGE, adminKey)
@@ -84,6 +174,7 @@ export default function Admin() {
       setSuccess(`已通过，API Key: ${res.api_key}，初始 Token 余额: ${res.token_balance ?? 10}（请妥善保存）`)
       loadApplications()
       loadCredentials()
+      loadDashboard()
     } catch (e) {
       setError((e as ApiError).message || '审批失败')
     }
@@ -96,6 +187,7 @@ export default function Admin() {
       await rejectApplication(id, adminKey || undefined)
       setSuccess('已拒绝')
       loadApplications()
+      loadDashboard()
     } catch (e) {
       setError((e as ApiError).message || '操作失败')
     }
@@ -132,6 +224,7 @@ export default function Admin() {
       setSuccess('Token 余额已更新')
       setBalanceEditId(null)
       loadCredentials()
+      loadDashboard()
     } catch (e) {
       setError((e as ApiError).message || '更新失败')
     }
@@ -162,6 +255,7 @@ export default function Admin() {
       setSetBalanceKey('')
       setSetBalanceAmount('')
       loadCredentials()
+      loadDashboard()
     } catch (e) {
       setError((e as ApiError).message || '设置失败')
     } finally {
@@ -220,31 +314,174 @@ export default function Admin() {
     }
   }
 
+  if (!adminKey) {
+    return (
+      <>
+        <h1 className="page-title">管理后台</h1>
+        <div className="card" style={{ maxWidth: 400 }}>
+          <h3>管理员登录</h3>
+          <p style={{ margin: '0 0 1rem', fontSize: '0.875rem', color: '#64748b' }}>
+            请输入管理员密码以查看申请记录、审批 API Key 申请。
+          </p>
+          <form onSubmit={handleLogin}>
+            <div className="form-group">
+              <input
+                type="password"
+                value={loginPassword}
+                onChange={(e) => { setLoginPassword(e.target.value); setLoginError(null) }}
+                placeholder="管理员密码"
+                autoFocus
+              />
+            </div>
+            {loginError && <div className="alert alert-error">{loginError}</div>}
+            <button type="submit" className="btn btn-primary" disabled={loginLoading}>
+              {loginLoading ? '验证中…' : '登录'}
+            </button>
+          </form>
+        </div>
+      </>
+    )
+  }
+
   return (
     <>
       <h1 className="page-title">管理后台</h1>
-
-      <div className="card">
-        <h3>管理员密钥</h3>
-        <p style={{ margin: '0 0 0.75rem', fontSize: '0.875rem', color: '#64748b' }}>
-          若后端配置了 ADMIN_API_KEY，请在此填写并保存，以便调用管理接口。
-        </p>
-        <div className="form-group" style={{ maxWidth: 320 }}>
-          <input
-            type="password"
-            value={adminKey}
-            onChange={(e) => setAdminKey(e.target.value)}
-            placeholder="X-Admin-Key（选填）"
-          />
+      <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', marginBottom: '1rem' }}>
+        <div className="card" style={{ flex: 1, marginBottom: 0 }}>
+          <h3>管理员密钥</h3>
+          <p style={{ margin: '0 0 0.75rem', fontSize: '0.875rem', color: '#64748b' }}>
+            若后端配置了 ADMIN_API_KEY，请在此填写并保存，以便调用管理接口。
+          </p>
+          <div className="form-group" style={{ maxWidth: 320 }}>
+            <input
+              type="password"
+              value={adminKey}
+              onChange={(e) => setAdminKey(e.target.value)}
+              placeholder="X-Admin-Key（选填）"
+            />
+          </div>
+          <button type="button" className="btn btn-secondary" onClick={saveAdminKey}>
+            保存并刷新
+          </button>
+          {success && <span style={{ marginLeft: '0.5rem', color: '#16a34a', fontSize: '0.875rem' }}>{success}</span>}
         </div>
-        <button type="button" className="btn btn-secondary" onClick={saveAdminKey}>
-          保存并刷新
+        <button type="button" className="btn btn-secondary" onClick={handleLogout} title="退出后需重新输入密码">
+          退出登录
         </button>
-        {success && <span style={{ marginLeft: '0.5rem', color: '#16a34a', fontSize: '0.875rem' }}>{success}</span>}
       </div>
 
       {error && <div className="alert alert-error">{error}</div>}
       {success && error === null && <div className="alert alert-success">{success}</div>}
+
+      <div className="card">
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '0.5rem' }}>
+          <h3 style={{ margin: 0 }}>仪表盘</h3>
+          <button type="button" className="btn btn-secondary" onClick={loadDashboard} disabled={dashboardLoading}>
+            {dashboardLoading ? '加载中…' : '刷新'}
+          </button>
+        </div>
+        {dashboardLoading && !dashboardSummary && <p style={{ color: '#64748b', marginTop: '0.5rem' }}>加载中…</p>}
+        {dashboardSummary && (
+          <>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: '1rem', marginBottom: '1.5rem' }}>
+              <div style={{ padding: '0.75rem', background: '#f8fafc', borderRadius: 8 }}>
+                <div style={{ fontSize: '0.75rem', color: '#64748b' }}>申请待审批</div>
+                <div style={{ fontSize: '1.5rem', fontWeight: 700 }}>{dashboardSummary.applications.pending}</div>
+              </div>
+              <div style={{ padding: '0.75rem', background: '#f0fdf4', borderRadius: 8 }}>
+                <div style={{ fontSize: '0.75rem', color: '#64748b' }}>申请已通过</div>
+                <div style={{ fontSize: '1.5rem', fontWeight: 700 }}>{dashboardSummary.applications.approved}</div>
+              </div>
+              <div style={{ padding: '0.75rem', background: '#fef2f2', borderRadius: 8 }}>
+                <div style={{ fontSize: '0.75rem', color: '#64748b' }}>申请已拒绝</div>
+                <div style={{ fontSize: '1.5rem', fontWeight: 700 }}>{dashboardSummary.applications.rejected}</div>
+              </div>
+              <div style={{ padding: '0.75rem', background: '#eff6ff', borderRadius: 8 }}>
+                <div style={{ fontSize: '0.75rem', color: '#64748b' }}>有效凭证数</div>
+                <div style={{ fontSize: '1.5rem', fontWeight: 700 }}>{dashboardSummary.credentials.active}</div>
+              </div>
+              <div style={{ padding: '0.75rem', background: '#f8fafc', borderRadius: 8 }}>
+                <div style={{ fontSize: '0.75rem', color: '#64748b' }}>全平台 Token 余量</div>
+                <div style={{ fontSize: '1.5rem', fontWeight: 700 }}>{dashboardSummary.tokens.remaining}</div>
+              </div>
+              <div style={{ padding: '0.75rem', background: '#f1f5f9', borderRadius: 8 }}>
+                <div style={{ fontSize: '0.75rem', color: '#64748b' }}>全平台 Token 用量</div>
+                <div style={{ fontSize: '1.5rem', fontWeight: 700 }}>{dashboardSummary.tokens.used}</div>
+              </div>
+            </div>
+            <div style={{ borderTop: '1px solid #e2e8f0', paddingTop: '1.5rem' }}>
+              <h4 style={{ margin: '0 0 0.75rem', fontSize: '1rem' }}>用户 Token 分布（同心圆）</h4>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '1.5rem', alignItems: 'flex-start' }}>
+                <div>
+                  <label style={{ fontSize: '0.875rem', marginRight: 8 }}>选择用户</label>
+                  <select
+                    value={dashboardUserId}
+                    onChange={(e) => onDashboardUserChange(e.target.value === '' ? '' : Number(e.target.value))}
+                    style={{ minWidth: 200, padding: '6px 8px' }}
+                  >
+                    <option value="">请选择用户</option>
+                    {dashboardUsers.map((u) => (
+                      <option key={u.id} value={u.id}>{u.username} ({u.email})</option>
+                    ))}
+                  </select>
+                </div>
+                <div style={{ flex: 1, minWidth: 280, maxWidth: 360, height: 280 }}>
+                  {dashboardStats && (dashboardStats.total_tokens > 0 || dashboardStats.used_tokens > 0 || dashboardStats.remaining_tokens > 0) ? (() => {
+                    const pieData = [
+                      { name: 'Token 用量', value: dashboardStats.used_tokens, color: '#94a3b8' },
+                      { name: 'Token 余量', value: dashboardStats.remaining_tokens, color: '#22c55e' },
+                    ].filter((d) => d.value > 0)
+                    return pieData.length > 0 ? (
+                      <ResponsiveContainer width="100%" height="100%">
+                        <PieChart>
+                          <Pie
+                            data={pieData}
+                            cx="50%"
+                            cy="50%"
+                            innerRadius="50%"
+                            outerRadius="85%"
+                            paddingAngle={2}
+                            dataKey="value"
+                            label={({ name, value }) => `${name}: ${value}`}
+                          >
+                            {pieData.map((entry, i) => (
+                              <Cell key={i} fill={entry.color} />
+                            ))}
+                          </Pie>
+                          <Tooltip formatter={(v: number) => [v, '']} />
+                          <Legend />
+                        </PieChart>
+                      </ResponsiveContainer>
+                    ) : (
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#64748b' }}>
+                        该用户暂无 Token 数据
+                      </div>
+                    )
+                  })() : dashboardUserId !== '' ? (
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#64748b' }}>
+                      该用户暂无 Token 数据
+                    </div>
+                  ) : (
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#64748b' }}>
+                      请在上方选择用户
+                    </div>
+                  )}
+                </div>
+                {dashboardStats && (dashboardStats.total_tokens > 0 || dashboardStats.used_tokens > 0 || dashboardStats.remaining_tokens > 0) && (
+                  <div style={{ padding: '0.75rem', background: '#f8fafc', borderRadius: 8, minWidth: 140 }}>
+                    <div style={{ fontSize: '0.75rem', color: '#64748b' }}>总量</div>
+                    <div style={{ fontSize: '1.25rem', fontWeight: 700 }}>{dashboardStats.total_tokens}</div>
+                    <div style={{ fontSize: '0.75rem', color: '#64748b', marginTop: 4 }}>用量</div>
+                    <div style={{ fontSize: '1rem', color: '#64748b' }}>{dashboardStats.used_tokens}</div>
+                    <div style={{ fontSize: '0.75rem', color: '#64748b', marginTop: 4 }}>余量</div>
+                    <div style={{ fontSize: '1rem', color: '#16a34a' }}>{dashboardStats.remaining_tokens}</div>
+                  </div>
+                )}
+              </div>
+            </div>
+          </>
+        )}
+      </div>
 
       <div className="card">
         <h3>设置 Token 数量</h3>
